@@ -565,7 +565,7 @@ async function initSolver() {
     document.getElementById('resultsArea').innerHTML = `
         <div class="loading-state">
             <div class="loading-title">⚙ Iniciando solver ILP</div>
-            <div class="loading-sub">Pyodide + PuLP + CBC — solo ocurre una vez</div>
+            <div class="loading-sub">Pyodide + scipy.optimize.milp — sin procesos externos</div>
             <div class="progress-bar-wrap">
                 <div class="progress-bar-fill" id="progressFill" style="width:5%"></div>
             </div>
@@ -577,35 +577,27 @@ async function initSolver() {
         setProgress(10);
         pyodide = await loadPyodide();
         appendLog('Pyodide cargado.', 'ok');
-        setProgress(35);
+        setProgress(55);
 
-        appendLog('Instalando micropip…');
-        await pyodide.loadPackage('micropip');
-        setProgress(50);
+        appendLog('Cargando scipy…');
+        await pyodide.loadPackage('scipy');
+        appendLog('scipy listo.', 'ok');
+        setProgress(85);
 
-        appendLog('Instalando PuLP (solver ILP)…');
-        const micropip = pyodide.pyimport('micropip');
-        await micropip.install('pulp');
-        appendLog('PuLP instalado.', 'ok');
-        setProgress(80);
-
-        // Pre-importar para verificar
-        appendLog('Verificando solver CBC…');
+        appendLog('Verificando scipy.optimize.milp…');
         await pyodide.runPythonAsync(`
-import pulp
-prob = pulp.LpProblem("test", pulp.LpMinimize)
-x = pulp.LpVariable("x", lowBound=0, cat='Integer')
-prob += x >= 1
-prob += x
-solver = pulp.PULP_CBC_CMD(msg=0)
-status = prob.solve(solver)
-assert pulp.value(x) == 1.0
+from scipy.optimize import milp, LinearConstraint, Bounds
+import numpy as np
+c = np.array([1.0])
+constraints = LinearConstraint(np.array([[1.0]]), lb=1.0, ub=np.inf)
+res = milp(c, constraints=constraints, integrality=np.array([1]), bounds=Bounds(0, np.inf))
+assert int(round(res.x[0])) == 1
 `);
-        appendLog('CBC verificado — solver listo.', 'ok');
+        appendLog('scipy.optimize.milp verificado.', 'ok');
         setProgress(100);
 
         solverReady = true;
-        setBadge('ready', 'CBC listo — óptimo garantizado');
+        setBadge('ready', 'scipy MILP listo — óptimo garantizado');
         document.getElementById('btnOptimize').disabled = false;
 
         document.getElementById('resultsArea').innerHTML = `
@@ -613,21 +605,19 @@ assert pulp.value(x) == 1.0
                 <div class="placeholder-icon">✅</div>
                 Solver ILP listo.<br>
                 Presiona <strong>Optimizar cortes</strong> para comenzar.<br>
-                <span style="font-size:0.85em;opacity:0.6">Solución óptima garantizada por CBC.</span>
+                <span style="font-size:0.85em;opacity:0.6">scipy.optimize.milp — óptimo garantizado.</span>
             </div>`;
 
     } catch (err) {
         appendLog('Error: ' + err.message, 'err');
-        setBadge('error', 'error al cargar solver');
-
-        // Fallback a JS
+        setBadge('error', 'Pyodide no disponible — usando fallback JS');
         solverReady = false;
         document.getElementById('btnOptimize').disabled = false;
         document.getElementById('resultsArea').innerHTML = `
             <div class="placeholder">
                 <div class="placeholder-icon">⚠️</div>
-                No se pudo cargar Pyodide.<br>
-                Se usará el optimizador JS (B&amp;B) como respaldo.<br>
+                Pyodide no disponible en este entorno.<br>
+                Se usará el optimizador JS (FFD + B&amp;B) como respaldo.<br>
                 <span style="font-size:0.85em;opacity:0.6">${err.message}</span>
             </div>`;
     }
@@ -754,96 +744,102 @@ async function optimize() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SOLVER PYTHON (Pyodide + PuLP + CBC) con Generación de Columnas
+// SOLVER PYTHON — scipy.optimize.milp (nativo, sin procesos externos)
 // ─────────────────────────────────────────────────────────────────────────────
 async function solveWithPython(barLen, cutW) {
-    const lengths   = pieces.map(p => p.length);
-    const demands   = pieces.map(p => p.quantity);
+    const lengths = pieces.map(p => p.length);
+    const demands = pieces.map(p => p.quantity);
 
     const pythonCode = `
 import json, time
-import pulp
+import numpy as np
+from scipy.optimize import milp, LinearConstraint, Bounds
 
-bar_len   = ${barLen}
-cut_w     = ${cutW}
-lengths   = ${JSON.stringify(lengths)}
-demands   = ${JSON.stringify(demands)}
-n_types   = len(lengths)
-
-# ── Slots: espacio efectivo que ocupa cada pieza (incluyendo kerf) ──────────
-slots = [l + cut_w for l in lengths]
+bar_len  = ${barLen}
+cut_w    = ${cutW}
+lengths  = ${JSON.stringify(lengths)}
+demands  = ${JSON.stringify(demands)}
+n_types  = len(lengths)
+slots    = [l + cut_w for l in lengths]
 
 # ── PASO 1: Generar todos los patrones válidos ──────────────────────────────
-# Un patrón es un vector [c0, c1, ..., cn] donde ci piezas de tipo i caben
-# en una barra sin exceder su capacidad.
-# Para instancias grandes, limitamos a 50,000 patrones.
-
+# Patrón = vector [c0..cn], ci = cuántas piezas tipo i en una barra
 MAX_PATTERNS = 50000
-patterns = []
+pat_counts = []   # lista de listas de conteos
+pat_waste  = []   # desperdicio de cada patrón
 
 def gen(type_idx, remaining, current):
-    if len(patterns) >= MAX_PATTERNS:
+    if len(pat_counts) >= MAX_PATTERNS:
         return
     if type_idx == n_types:
         if any(c > 0 for c in current):
-            waste = remaining
-            patterns.append((list(current), waste))
+            pat_counts.append(list(current))
+            pat_waste.append(remaining)
         return
     max_c = min(int(remaining // slots[type_idx]), demands[type_idx])
-    for c in range(0, max_c + 1):
+    for c in range(max_c + 1):
         current[type_idx] = c
         gen(type_idx + 1, remaining - c * slots[type_idx], current)
         current[type_idx] = 0
 
 gen(0, bar_len, [0] * n_types)
-n_pats = len(patterns)
+n_pats = len(pat_counts)
 
-# ── PASO 2: ILP — Minimizar número de barras ───────────────────────────────
-# Variables: x[j] = cuántas veces se usa el patrón j (entero >= 0)
-# Objetivo: minimizar sum(x[j])
-# Restricciones: para cada tipo i, sum(pat[j][i] * x[j]) >= demands[i]
+# ── PASO 2: MILP con scipy ─────────────────────────────────────────────────
+# Variables: x[j] >= 0 enteras, = veces que se usa patrón j
+# Objetivo: minimizar sum(x[j])               → c = [1, 1, ..., 1]
+# Restricciones: A @ x >= demands             → cobertura de demanda
+# donde A[i,j] = pat_counts[j][i]
 
 t0 = time.time()
 
-prob = pulp.LpProblem("cutting_stock", pulp.LpMinimize)
+# Vector de costos (1 barra por patrón)
+c_obj = np.ones(n_pats)
 
-x = [pulp.LpVariable(f"x_{j}", lowBound=0, cat='Integer') for j in range(n_pats)]
+# Matriz de restricciones: shape (n_types, n_pats)
+A = np.array(pat_counts, dtype=float).T   # (n_types, n_pats)
+b_lb = np.array(demands, dtype=float)
+b_ub = np.full(n_types, np.inf)
 
-# Objetivo: minimizar total de barras
-prob += pulp.lpSum(x)
+constraints = LinearConstraint(A, lb=b_lb, ub=b_ub)
+integrality = np.ones(n_pats)             # todas enteras
+bounds = Bounds(lb=0.0, ub=np.inf)
 
-# Cubrir demanda de cada tipo
-for i in range(n_types):
-    prob += pulp.lpSum(patterns[j][0][i] * x[j] for j in range(n_pats)) >= demands[i]
-
-solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=30)
-status = prob.solve(solver)
+res = milp(
+    c_obj,
+    constraints=constraints,
+    integrality=integrality,
+    bounds=bounds,
+    options={"time_limit": 30.0, "disp": False}
+)
 
 solve_time = round(time.time() - t0, 2)
-is_optimal = pulp.LpStatus[prob.status] == 'Optimal'
+is_optimal = res.status == 0  # 0 = óptimo encontrado
 
 # ── PASO 3: Extraer solución ────────────────────────────────────────────────
 solution_patterns = []
-for j in range(n_pats):
-    count = int(round(pulp.value(x[j]) or 0))
-    if count > 0:
-        counts = patterns[j][0]
-        waste  = patterns[j][1]
-        solution_patterns.append({
-            "counts": counts,
-            "waste":  waste,
-            "count":  count
-        })
+if res.x is not None:
+    for j in range(n_pats):
+        count = int(round(res.x[j]))
+        if count > 0:
+            solution_patterns.append({
+                "counts": pat_counts[j],
+                "waste":  pat_waste[j],
+                "count":  count
+            })
+else:
+    # Si milp no encontró solución, devolver vacío y JS hará fallback
+    solution_patterns = []
 
 total_bars = sum(p["count"] for p in solution_patterns)
 
 result = {
-    "patterns":    solution_patterns,
-    "total_bars":  total_bars,
-    "is_optimal":  is_optimal,
-    "status":      pulp.LpStatus[prob.status],
-    "n_patterns":  n_pats,
-    "solve_time":  solve_time
+    "patterns":   solution_patterns,
+    "total_bars": total_bars,
+    "is_optimal": is_optimal,
+    "status":     res.message if hasattr(res, 'message') else str(res.status),
+    "n_patterns": n_pats,
+    "solve_time": solve_time
 }
 
 json.dumps(result)
@@ -852,7 +848,10 @@ json.dumps(result)
     const resultJson = await pyodide.runPythonAsync(pythonCode);
     const data = JSON.parse(resultJson);
 
-    // Convertir patrones Python → formato JS para renderización
+    if (!data.patterns.length) {
+        throw new Error('El solver no encontró solución — usando fallback JS');
+    }
+
     const finalPatterns = data.patterns.map(pat => {
         const bar = [];
         pat.counts.forEach((c, typeIdx) => {
@@ -865,10 +864,10 @@ json.dumps(result)
     });
 
     return {
-        patterns:  finalPatterns,
-        totalBars: data.total_bars,
-        isOptimal: data.is_optimal,
-        solverInfo: `CBC · ${data.n_patterns} patrones · ${data.solve_time}s · ${data.status}`
+        patterns:   finalPatterns,
+        totalBars:  data.total_bars,
+        isOptimal:  data.is_optimal,
+        solverInfo: `scipy MILP · ${data.n_patterns} patrones · ${data.solve_time}s · ${data.status}`
     };
 }
 
