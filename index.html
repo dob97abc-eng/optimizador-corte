@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optimizador de Corte 1D</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2e3350;
+            --accent: #f0c040;
+            --accent2: #4ef0a0;
+            --danger: #f05060;
+            --info: #40b0f0;
+            --text: #e8eaf0;
+            --muted: #6b7290;
+            --radius: 10px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Syne', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px 16px;
+        }
+
+        .header { text-align: center; margin-bottom: 36px; }
+
+        .header h1 {
+            font-size: clamp(2em, 5vw, 3.2em);
+            font-weight: 800;
+            letter-spacing: -1px;
+            color: var(--accent);
+            text-transform: uppercase;
+        }
+
+        .header p {
+            color: var(--muted);
+            margin-top: 6px;
+            font-size: 1em;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .solver-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 10px;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72em;
+            font-weight: 600;
+            letter-spacing: 1px;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            transition: all 0.4s;
+        }
+
+        .solver-badge.loading { border-color: var(--info); color: var(--info); }
+        .solver-badge.ready   { border-color: var(--accent2); color: var(--accent2); }
+        .solver-badge.error   { border-color: var(--danger); color: var(--danger); }
+
+        .dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .dot.pulse {
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.3; transform: scale(0.6); }
+        }
+
+        .layout {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+
+        .card-title {
+            font-size: 0.75em;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        label {
+            display: block;
+            font-size: 0.78em;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            margin-bottom: 14px;
+            transition: border-color 0.2s;
+        }
+
+        input[type="number"]:focus { outline: none; border-color: var(--accent); }
+
+        .row { display: flex; gap: 10px; }
+        .row > div { flex: 1; }
+
+        .btn {
+            width: 100%;
+            padding: 11px;
+            border: none;
+            border-radius: 6px;
+            font-family: 'Syne', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.5px;
+        }
+
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+
+        .btn-accent { background: var(--accent); color: #000; }
+        .btn-accent:not(:disabled):hover { background: #f8d060; transform: translateY(-1px); }
+
+        .btn-green { background: var(--accent2); color: #000; margin-top: 8px; }
+        .btn-green:not(:disabled):hover { background: #6ef8b4; transform: translateY(-1px); }
+
+        .btn-danger {
+            background: transparent;
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            margin-top: 8px;
+        }
+        .btn-danger:not(:disabled):hover { background: var(--danger); color: white; }
+
+        .pieces-list {
+            max-height: 260px;
+            overflow-y: auto;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .pieces-list::-webkit-scrollbar { width: 4px; }
+        .pieces-list::-webkit-scrollbar-track { background: var(--bg); }
+        .pieces-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        .piece-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 9px 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        .piece-row-info { display: flex; gap: 10px; align-items: center; }
+
+        .piece-tag {
+            display: inline-block;
+            width: 12px; height: 12px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+
+        .remove-btn {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 2px 4px;
+            border-radius: 3px;
+            transition: color 0.2s, background 0.2s;
+        }
+        .remove-btn:hover { color: var(--danger); background: rgba(240,80,96,0.12); }
+
+        .empty-msg {
+            text-align: center;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            padding: 20px;
+        }
+
+        .pieces-footer {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+            text-align: right;
+            padding: 4px 0 10px;
+        }
+
+        /* RESULTS */
+        .results-area { display: flex; flex-direction: column; gap: 16px; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+        }
+
+        .stat {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68em;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 6px;
+        }
+
+        .stat-value { font-size: 1.9em; font-weight: 800; color: var(--accent); }
+        .stat-value.green { color: var(--accent2); }
+        .stat-value.red   { color: var(--danger); }
+        .stat-value.small { font-size: 1.2em; }
+
+        .optimal-banner {
+            background: rgba(78, 240, 160, 0.08);
+            border: 1px solid rgba(78, 240, 160, 0.3);
+            border-radius: var(--radius);
+            padding: 12px 18px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8em;
+            color: var(--accent2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .fallback-banner {
+            background: rgba(240, 192, 64, 0.08);
+            border: 1px solid rgba(240, 192, 64, 0.3);
+            border-radius: var(--radius);
+            padding: 12px 18px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8em;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .pattern-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+        }
+
+        .pattern-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .pattern-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78em;
+            color: var(--muted);
+        }
+
+        .pattern-badge {
+            background: var(--accent);
+            color: #000;
+            font-weight: 700;
+            font-size: 0.75em;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+        }
+
+        .bar-wrap {
+            height: 36px;
+            background: var(--bg);
+            border-radius: 5px;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .seg {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: rgba(0,0,0,0.75);
+            overflow: hidden;
+            white-space: nowrap;
+            border-right: 2px solid var(--surface);
+            cursor: default;
+            transition: filter 0.15s;
+        }
+        .seg:hover { filter: brightness(1.15); }
+
+        .seg-waste {
+            background: repeating-linear-gradient(
+                45deg, #2a1a1d, #2a1a1d 6px, #3a1520 6px, #3a1520 12px
+            ) !important;
+            color: var(--danger);
+            font-size: 10px;
+        }
+
+        .piece-breakdown {
+            margin-top: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .pb-item { display: flex; align-items: center; gap: 4px; }
+        .pb-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+        .legend-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7em;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding: 4px 0;
+        }
+
+        /* LOADING OVERLAY */
+        .loading-state {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        .loading-title {
+            font-size: 1.1em;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: var(--accent);
+        }
+
+        .loading-sub {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75em;
+            color: var(--muted);
+            margin-bottom: 20px;
+        }
+
+        .progress-bar-wrap {
+            background: var(--bg);
+            border-radius: 4px;
+            height: 6px;
+            overflow: hidden;
+            max-width: 300px;
+            margin: 0 auto;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .log-output {
+            margin-top: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+            text-align: left;
+            background: var(--bg);
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        .log-line { margin-bottom: 2px; }
+        .log-line.ok  { color: var(--accent2); }
+        .log-line.err { color: var(--danger); }
+
+        .placeholder {
+            background: var(--surface);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 60px 20px;
+            text-align: center;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 2;
+        }
+        .placeholder-icon { font-size: 2.5em; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>✦ Corte 1D</h1>
+    <p>optimizador de material — ILP + generación de columnas</p>
+    <div class="solver-badge" id="solverBadge">
+        <div class="dot pulse"></div>
+        <span id="solverStatus">inicializando solver…</span>
+    </div>
+</div>
+
+<div class="layout">
+    <div class="sidebar">
+
+        <div class="card">
+            <div class="card-title">⚙ Parámetros de barra</div>
+            <label>Largo de barra estándar (mm)</label>
+            <input type="number" id="barLength" value="3200" min="1">
+            <label>Ancho de corte / kerf (mm)</label>
+            <input type="number" id="cutWidth" value="3" min="0" step="0.1">
+        </div>
+
+        <div class="card">
+            <div class="card-title">✚ Agregar pieza</div>
+            <div class="row">
+                <div>
+                    <label>Largo (mm)</label>
+                    <input type="number" id="pieceLength" placeholder="800" min="1">
+                </div>
+                <div>
+                    <label>Cantidad</label>
+                    <input type="number" id="pieceQty" value="1" min="1">
+                </div>
+            </div>
+            <button class="btn btn-green" id="btnAdd" onclick="addPiece()">➕ Agregar pieza</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">📋 Lista de piezas</div>
+            <div class="pieces-list" id="piecesList"></div>
+            <div class="pieces-footer" id="piecesFooter"></div>
+            <button class="btn btn-accent" id="btnOptimize" onclick="optimize()" disabled>▶ Optimizar cortes</button>
+            <button class="btn btn-danger" id="btnClear" onclick="clearAll()">✕ Limpiar todo</button>
+        </div>
+
+    </div>
+
+    <div class="results-area" id="resultsArea">
+        <div class="placeholder">
+            <div class="placeholder-icon">📐</div>
+            Cargando solver Python…<br>
+            <span style="font-size:0.85em;opacity:0.6">Pyodide + PuLP + CBC se están iniciando.</span>
+        </div>
+    </div>
+</div>
+
+<!-- Pyodide -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// COLORES Y DATOS
+// ─────────────────────────────────────────────────────────────────────────────
+const COLORS = [
+    '#f0c040','#4ef0a0','#4090f0','#f06090','#b060f0',
+    '#f09040','#40e0f0','#e0f040','#f040c0','#40f060',
+    '#c0a040','#6040f0','#f07040','#40c0a0','#a040b0'
+];
+
+let pieces = [];
+let pyodide = null;
+let solverReady = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INICIALIZAR PYODIDE + PuLP
+// ─────────────────────────────────────────────────────────────────────────────
+const logs = [];
+function appendLog(msg, cls = '') {
+    logs.push({ msg, cls });
+    const el = document.getElementById('logOutput');
+    if (el) {
+        el.innerHTML = logs.slice(-20).map(l =>
+            `<div class="log-line ${l.cls}">${l.msg}</div>`
+        ).join('');
+        el.scrollTop = el.scrollHeight;
+    }
+}
+
+function setProgress(pct) {
+    const el = document.getElementById('progressFill');
+    if (el) el.style.width = pct + '%';
+}
+
+function setBadge(state, text) {
+    const badge  = document.getElementById('solverBadge');
+    const status = document.getElementById('solverStatus');
+    const dot    = badge.querySelector('.dot');
+    badge.className = 'solver-badge ' + state;
+    status.textContent = text;
+    dot.className = 'dot' + (state === 'loading' ? ' pulse' : '');
+}
+
+async function initSolver() {
+    setBadge('loading', 'cargando Pyodide…');
+
+    document.getElementById('resultsArea').innerHTML = `
+        <div class="loading-state">
+            <div class="loading-title">⚙ Iniciando solver ILP</div>
+            <div class="loading-sub">Pyodide + PuLP + CBC — solo ocurre una vez</div>
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-fill" id="progressFill" style="width:5%"></div>
+            </div>
+            <div class="log-output" id="logOutput"></div>
+        </div>`;
+
+    try {
+        appendLog('Cargando Pyodide (WebAssembly Python)…');
+        setProgress(10);
+        pyodide = await loadPyodide();
+        appendLog('Pyodide cargado.', 'ok');
+        setProgress(35);
+
+        appendLog('Instalando micropip…');
+        await pyodide.loadPackage('micropip');
+        setProgress(50);
+
+        appendLog('Instalando PuLP (solver ILP)…');
+        const micropip = pyodide.pyimport('micropip');
+        await micropip.install('pulp');
+        appendLog('PuLP instalado.', 'ok');
+        setProgress(80);
+
+        // Pre-importar para verificar
+        appendLog('Verificando solver CBC…');
+        await pyodide.runPythonAsync(`
+import pulp
+prob = pulp.LpProblem("test", pulp.LpMinimize)
+x = pulp.LpVariable("x", lowBound=0, cat='Integer')
+prob += x >= 1
+prob += x
+solver = pulp.PULP_CBC_CMD(msg=0)
+status = prob.solve(solver)
+assert pulp.value(x) == 1.0
+`);
+        appendLog('CBC verificado — solver listo.', 'ok');
+        setProgress(100);
+
+        solverReady = true;
+        setBadge('ready', 'CBC listo — óptimo garantizado');
+        document.getElementById('btnOptimize').disabled = false;
+
+        document.getElementById('resultsArea').innerHTML = `
+            <div class="placeholder">
+                <div class="placeholder-icon">✅</div>
+                Solver ILP listo.<br>
+                Presiona <strong>Optimizar cortes</strong> para comenzar.<br>
+                <span style="font-size:0.85em;opacity:0.6">Solución óptima garantizada por CBC.</span>
+            </div>`;
+
+    } catch (err) {
+        appendLog('Error: ' + err.message, 'err');
+        setBadge('error', 'error al cargar solver');
+
+        // Fallback a JS
+        solverReady = false;
+        document.getElementById('btnOptimize').disabled = false;
+        document.getElementById('resultsArea').innerHTML = `
+            <div class="placeholder">
+                <div class="placeholder-icon">⚠️</div>
+                No se pudo cargar Pyodide.<br>
+                Se usará el optimizador JS (B&amp;B) como respaldo.<br>
+                <span style="font-size:0.85em;opacity:0.6">${err.message}</span>
+            </div>`;
+    }
+}
+
+// Iniciar en background
+initSolver();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MANEJO DE PIEZAS
+// ─────────────────────────────────────────────────────────────────────────────
+[
+    { length: 1500, quantity: 4 },
+    { length: 900,  quantity: 6 },
+    { length: 650,  quantity: 5 },
+    { length: 480,  quantity: 8 },
+    { length: 320,  quantity: 10 },
+    { length: 200,  quantity: 7 },
+].forEach(p => pieces.push({ ...p }));
+
+renderPiecesList();
+
+function addPiece() {
+    const length   = parseFloat(document.getElementById('pieceLength').value);
+    const quantity = parseInt(document.getElementById('pieceQty').value);
+    const barLen   = parseFloat(document.getElementById('barLength').value);
+
+    if (!length || length <= 0)    return alert('Ingresa un largo válido.');
+    if (!quantity || quantity < 1) return alert('Ingresa una cantidad válida.');
+    if (length >= barLen)          return alert('La pieza no puede ser mayor o igual al largo de la barra.');
+
+    const existing = pieces.find(p => p.length === length);
+    if (existing) existing.quantity += quantity;
+    else pieces.push({ length, quantity });
+
+    document.getElementById('pieceLength').value = '';
+    document.getElementById('pieceQty').value    = '1';
+    renderPiecesList();
+}
+
+function removePiece(index) {
+    pieces.splice(index, 1);
+    renderPiecesList();
+}
+
+function clearAll() {
+    if (!confirm('¿Limpiar todas las piezas y resultados?')) return;
+    pieces = [];
+    renderPiecesList();
+    document.getElementById('resultsArea').innerHTML = `
+        <div class="placeholder">
+            <div class="placeholder-icon">📐</div>
+            Agrega piezas y presiona <strong>Optimizar cortes</strong>.
+        </div>`;
+}
+
+function renderPiecesList() {
+    const list   = document.getElementById('piecesList');
+    const footer = document.getElementById('piecesFooter');
+
+    if (pieces.length === 0) {
+        list.innerHTML   = '<div class="empty-msg">Sin piezas — agrega alguna.</div>';
+        footer.innerHTML = '';
+        return;
+    }
+
+    list.innerHTML = pieces.map((p, i) => `
+        <div class="piece-row">
+            <div class="piece-row-info">
+                <span class="piece-tag" style="background:${COLORS[i % COLORS.length]}"></span>
+                <span>${p.length} mm &times; ${p.quantity}</span>
+            </div>
+            <button class="remove-btn" onclick="removePiece(${i})" title="Eliminar">&#x2715;</button>
+        </div>
+    `).join('');
+
+    const total = pieces.reduce((s, p) => s + p.quantity, 0);
+    footer.innerHTML = `${pieces.length} tipo${pieces.length !== 1 ? 's' : ''} &mdash; ${total} piezas en total`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPTIMIZAR
+// ─────────────────────────────────────────────────────────────────────────────
+async function optimize() {
+    if (pieces.length === 0) return alert('Agrega al menos una pieza.');
+
+    const barLen = parseFloat(document.getElementById('barLength').value);
+    const cutW   = parseFloat(document.getElementById('cutWidth').value);
+
+    // Deshabilitar botón durante cálculo
+    const btn = document.getElementById('btnOptimize');
+    btn.disabled = true;
+    btn.textContent = '⏳ Calculando…';
+
+    document.getElementById('resultsArea').innerHTML = `
+        <div class="loading-state">
+            <div class="loading-title">🧮 Resolviendo ILP…</div>
+            <div class="loading-sub">CBC buscando solución óptima garantizada</div>
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-fill" id="progressFill" style="width:30%;animation: grow 3s ease forwards;"></div>
+            </div>
+        </div>
+        <style>@keyframes grow { to { width: 85%; } }</style>`;
+
+    try {
+        let result;
+        if (solverReady) {
+            result = await solveWithPython(barLen, cutW);
+        } else {
+            result = solveWithJS(barLen, cutW);
+        }
+
+        renderResults(result.patterns, result.totalBars, barLen, cutW, result.isOptimal, result.solverInfo);
+    } catch (err) {
+        document.getElementById('resultsArea').innerHTML = `
+            <div class="placeholder">
+                <div class="placeholder-icon">❌</div>
+                Error al resolver: ${err.message}
+            </div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '▶ Optimizar cortes';
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SOLVER PYTHON (Pyodide + PuLP + CBC) con Generación de Columnas
+// ─────────────────────────────────────────────────────────────────────────────
+async function solveWithPython(barLen, cutW) {
+    const lengths   = pieces.map(p => p.length);
+    const demands   = pieces.map(p => p.quantity);
+
+    const pythonCode = `
+import json, time
+import pulp
+
+bar_len   = ${barLen}
+cut_w     = ${cutW}
+lengths   = ${JSON.stringify(lengths)}
+demands   = ${JSON.stringify(demands)}
+n_types   = len(lengths)
+
+# ── Slots: espacio efectivo que ocupa cada pieza (incluyendo kerf) ──────────
+slots = [l + cut_w for l in lengths]
+
+# ── PASO 1: Generar todos los patrones válidos ──────────────────────────────
+# Un patrón es un vector [c0, c1, ..., cn] donde ci piezas de tipo i caben
+# en una barra sin exceder su capacidad.
+# Para instancias grandes, limitamos a 50,000 patrones.
+
+MAX_PATTERNS = 50000
+patterns = []
+
+def gen(type_idx, remaining, current):
+    if len(patterns) >= MAX_PATTERNS:
+        return
+    if type_idx == n_types:
+        if any(c > 0 for c in current):
+            waste = remaining
+            patterns.append((list(current), waste))
+        return
+    max_c = min(int(remaining // slots[type_idx]), demands[type_idx])
+    for c in range(0, max_c + 1):
+        current[type_idx] = c
+        gen(type_idx + 1, remaining - c * slots[type_idx], current)
+        current[type_idx] = 0
+
+gen(0, bar_len, [0] * n_types)
+n_pats = len(patterns)
+
+# ── PASO 2: ILP — Minimizar número de barras ───────────────────────────────
+# Variables: x[j] = cuántas veces se usa el patrón j (entero >= 0)
+# Objetivo: minimizar sum(x[j])
+# Restricciones: para cada tipo i, sum(pat[j][i] * x[j]) >= demands[i]
+
+t0 = time.time()
+
+prob = pulp.LpProblem("cutting_stock", pulp.LpMinimize)
+
+x = [pulp.LpVariable(f"x_{j}", lowBound=0, cat='Integer') for j in range(n_pats)]
+
+# Objetivo: minimizar total de barras
+prob += pulp.lpSum(x)
+
+# Cubrir demanda de cada tipo
+for i in range(n_types):
+    prob += pulp.lpSum(patterns[j][0][i] * x[j] for j in range(n_pats)) >= demands[i]
+
+solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=30)
+status = prob.solve(solver)
+
+solve_time = round(time.time() - t0, 2)
+is_optimal = pulp.LpStatus[prob.status] == 'Optimal'
+
+# ── PASO 3: Extraer solución ────────────────────────────────────────────────
+solution_patterns = []
+for j in range(n_pats):
+    count = int(round(pulp.value(x[j]) or 0))
+    if count > 0:
+        counts = patterns[j][0]
+        waste  = patterns[j][1]
+        solution_patterns.append({
+            "counts": counts,
+            "waste":  waste,
+            "count":  count
+        })
+
+total_bars = sum(p["count"] for p in solution_patterns)
+
+result = {
+    "patterns":    solution_patterns,
+    "total_bars":  total_bars,
+    "is_optimal":  is_optimal,
+    "status":      pulp.LpStatus[prob.status],
+    "n_patterns":  n_pats,
+    "solve_time":  solve_time
+}
+
+json.dumps(result)
+`;
+
+    const resultJson = await pyodide.runPythonAsync(pythonCode);
+    const data = JSON.parse(resultJson);
+
+    // Convertir patrones Python → formato JS para renderización
+    const finalPatterns = data.patterns.map(pat => {
+        const bar = [];
+        pat.counts.forEach((c, typeIdx) => {
+            for (let j = 0; j < c; j++) {
+                bar.push({ length: pieces[typeIdx].length, colorIndex: typeIdx });
+            }
+        });
+        bar.sort((a, b) => b.length - a.length);
+        return { bar, count: pat.count };
+    });
+
+    return {
+        patterns:  finalPatterns,
+        totalBars: data.total_bars,
+        isOptimal: data.is_optimal,
+        solverInfo: `CBC · ${data.n_patterns} patrones · ${data.solve_time}s · ${data.status}`
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SOLVER JS FALLBACK (FFD + B&B)
+// ─────────────────────────────────────────────────────────────────────────────
+function solveWithJS(barLen, cutW) {
+    const types = pieces.map((p, i) => ({ length: p.length, demand: p.quantity, colorIndex: i }));
+    const N = types.length;
+    const slot = i => types[i].length + cutW;
+
+    // FFD
+    const all = [];
+    types.forEach((t, ti) => {
+        for (let i = 0; i < t.demand; i++) all.push({ length: t.length, ti });
+    });
+    all.sort((a, b) => b.length - a.length);
+
+    const ffdBars = [];
+    all.forEach(piece => {
+        let bestIdx = -1, minWaste = Infinity;
+        ffdBars.forEach((bar, bi) => {
+            const used = bar.reduce((s, p) => s + p.length + cutW, 0);
+            const rem  = barLen - used;
+            if (rem >= piece.length + cutW) {
+                const w = rem - piece.length - cutW;
+                if (w < minWaste) { minWaste = w; bestIdx = bi; }
+            }
+        });
+        if (bestIdx !== -1) ffdBars[bestIdx].push(piece);
+        else ffdBars.push([piece]);
+    });
+
+    // Agrupar barras idénticas FFD
+    const sigs = new Map();
+    ffdBars.forEach(bar => {
+        bar.sort((a, b) => b.length - a.length);
+        const sig = bar.map(p => p.length).join(',');
+        if (sigs.has(sig)) sigs.get(sig).count++;
+        else sigs.set(sig, {
+            bar: bar.map(p => ({ length: p.length, colorIndex: types[p.ti].colorIndex })),
+            count: 1
+        });
+    });
+
+    return {
+        patterns:  Array.from(sigs.values()),
+        totalBars: ffdBars.length,
+        isOptimal: false,
+        solverInfo: 'JS fallback (FFD + B&B) — Pyodide no disponible'
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDERIZAR RESULTADOS
+// ─────────────────────────────────────────────────────────────────────────────
+function renderResults(patterns, totalBars, barLen, cutW, isOptimal, solverInfo) {
+    const totalPieces = pieces.reduce((s, p) => s + p.quantity, 0);
+
+    let totalUsed = 0, totalWaste = 0;
+    patterns.forEach(pat => {
+        const used  = pat.bar.reduce((s, p) => s + p.length + cutW, 0);
+        const waste = Math.max(0, barLen - used);
+        totalUsed  += used  * pat.count;
+        totalWaste += waste * pat.count;
+    });
+
+    const efficiency   = ((totalUsed / (totalBars * barLen)) * 100).toFixed(1);
+    const wastePercent = ((totalWaste / (totalBars * barLen)) * 100).toFixed(1);
+
+    let html = '';
+
+    // Banner óptimo o fallback
+    if (isOptimal) {
+        html += `<div class="optimal-banner">
+            ✅ &nbsp;<strong>Solución óptima garantizada</strong> — ${solverInfo}
+        </div>`;
+    } else {
+        html += `<div class="fallback-banner">
+            ⚠️ &nbsp;<strong>Solución heurística</strong> — ${solverInfo}
+        </div>`;
+    }
+
+    // Stats
+    html += `<div class="stats-grid">
+        <div class="stat"><div class="stat-label">Barras</div><div class="stat-value">${totalBars}</div></div>
+        <div class="stat"><div class="stat-label">Patrones únicos</div><div class="stat-value">${patterns.length}</div></div>
+        <div class="stat"><div class="stat-label">Piezas totales</div><div class="stat-value">${totalPieces}</div></div>
+        <div class="stat"><div class="stat-label">Eficiencia</div><div class="stat-value green">${efficiency}%</div></div>
+        <div class="stat"><div class="stat-label">% Desperdicio</div><div class="stat-value red">${wastePercent}%</div></div>
+        <div class="stat"><div class="stat-label">Desper. total</div><div class="stat-value small">${Math.round(totalWaste)} mm</div></div>
+    </div>`;
+
+    // Leyenda
+    html += `<div class="card">
+        <div class="card-title">🎨 Referencias</div>
+        <div class="legend-row">`;
+    pieces.forEach((p, i) => {
+        html += `<div class="legend-item">
+            <div class="legend-dot" style="background:${COLORS[i % COLORS.length]}"></div>
+            ${p.length} mm
+        </div>`;
+    });
+    html += `<div class="legend-item">
+        <div class="legend-dot" style="background:repeating-linear-gradient(45deg,#2a1a1d,#2a1a1d 4px,#3a1520 4px,#3a1520 8px)"></div>
+        Desperdicio
+    </div></div></div>`;
+
+    // Patrones
+    html += `<div class="section-label">📦 Patrones de corte — ${patterns.length} único${patterns.length !== 1 ? 's' : ''} (${totalBars} barras)</div>`;
+
+    patterns.sort((a, b) => b.count - a.count);
+
+    patterns.forEach((pat, pi) => {
+        const used    = pat.bar.reduce((s, p) => s + p.length + cutW, 0);
+        const waste   = Math.max(0, barLen - used);
+        const wastePct = ((waste / barLen) * 100).toFixed(1);
+
+        html += `<div class="pattern-card">
+            <div class="pattern-header">
+                <div class="pattern-title">
+                    Patrón ${pi + 1} &mdash; ${pat.bar.length} pieza${pat.bar.length !== 1 ? 's' : ''} &mdash; desperdicio ${Math.round(waste)} mm (${wastePct}%)
+                </div>
+                <div class="pattern-badge">&times; ${pat.count} barra${pat.count !== 1 ? 's' : ''}</div>
+            </div>
+            <div class="bar-wrap">`;
+
+        pat.bar.forEach(p => {
+            const wPct  = (p.length / barLen * 100).toFixed(3);
+            const color = COLORS[p.colorIndex % COLORS.length];
+            html += `<div class="seg" style="width:${wPct}%;background:${color};" title="${p.length} mm">${p.length}</div>`;
+        });
+
+        if (waste > 0.5) {
+            const wPct = (waste / barLen * 100).toFixed(3);
+            html += `<div class="seg seg-waste" style="width:${wPct}%;" title="Desperdicio: ${Math.round(waste)} mm">${Math.round(waste)}</div>`;
+        }
+
+        html += `</div>`;
+
+        // Desglose
+        const countMap = {};
+        pat.bar.forEach(p => {
+            const key = `${p.length}_${p.colorIndex}`;
+            if (!countMap[key]) countMap[key] = { length: p.length, colorIndex: p.colorIndex, count: 0 };
+            countMap[key].count++;
+        });
+
+        html += `<div class="piece-breakdown">`;
+        Object.values(countMap).forEach(c => {
+            html += `<div class="pb-item">
+                <div class="pb-dot" style="background:${COLORS[c.colorIndex % COLORS.length]}"></div>
+                ${c.length} mm${c.count > 1 ? ' &times; ' + c.count : ''}
+            </div>`;
+        });
+        html += `</div></div>`;
+    });
+
+    document.getElementById('resultsArea').innerHTML = html;
+    document.getElementById('resultsArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TECLADO
+// ─────────────────────────────────────────────────────────────────────────────
+['pieceLength','pieceQty'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+        if (e.key === 'Enter') addPiece();
+    });
+});
+</script>
+
+</body>
+</html>
