@@ -12,7 +12,7 @@ Dado un largo de barra estándar y una lista de piezas a cortar, la herramienta 
 
 ## Demo
 
-🔗 **[Abrir herramienta](https://tu-usuario.github.io/optimizador-corte)**
+🔗 **[Abrir herramienta]https://dob97abc-eng.github.io/optimizador-corte/**
 
 > Reemplaza la URL con tu dirección de GitHub Pages.
 
