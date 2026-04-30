@@ -12,7 +12,7 @@ Dado un largo de barra estándar y una lista de piezas a cortar, la herramienta 
 
 ## Demo
 
-🔗 **[Abrir herramienta]https://dob97abc-eng.github.io/optimizador-corte/**
+🔗 **[Abrir herramienta]https://MPLSOLUTIONS.github.io/optimizador-corte/**
 
 ---
 
